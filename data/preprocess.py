@@ -212,7 +212,7 @@ def preprocess(cfg: dict) -> None:
     for i, mid in enumerate(machines):
         df = pd.concat(machine_raw[mid], ignore_index=True)
         df = resample_300s(df)
-        if len(df) < seq_len + horizon + 1:
+        if len(df) < seq_len + horizon:
             continue
         df = add_features(df)
         df = df.dropna(subset=FEATURE_COLS).reset_index(drop=True)

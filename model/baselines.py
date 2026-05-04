@@ -138,9 +138,10 @@ class LSTMForecaster(nn.Module):
 
     def predict(self, X: np.ndarray) -> np.ndarray:
         self.eval()
+        device = next(self.parameters()).device
         with torch.no_grad():
-            t = torch.from_numpy(X).float()
-            return self.forward(t).numpy()
+            t = torch.from_numpy(X).float().to(device)
+            return self.forward(t).cpu().numpy()
 
 
 # ---------------------------------------------------------------------------
@@ -185,9 +186,10 @@ class TransformerForecaster(nn.Module):
 
     def predict(self, X: np.ndarray) -> np.ndarray:
         self.eval()
+        device = next(self.parameters()).device
         with torch.no_grad():
-            t = torch.from_numpy(X).float()
-            return self.forward(t).numpy()
+            t = torch.from_numpy(X).float().to(device)
+            return self.forward(t).cpu().numpy()
 
 
 # ---------------------------------------------------------------------------

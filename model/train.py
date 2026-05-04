@@ -179,7 +179,7 @@ def train(cfg_path: str | Path = ROOT_DIR / "configs" / "default.yaml") -> None:
         weight_decay=cfg["training"]["weight_decay"],
     )
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-        optimizer, T_max=50
+        optimizer, T_max=cfg["training"]["max_epochs"]
     )
     criterion = nn.MSELoss()
 
@@ -270,7 +270,21 @@ def train(cfg_path: str | Path = ROOT_DIR / "configs" / "default.yaml") -> None:
             f"  lr={lr_now:.2e}  gpu={thermal.temperature}°C"
         )
 
-        # ---- Checkpoint ----
+        # ---- Early stopping (update bookkeeping first so latest.pt is consistent) ----
+        early_stop = False
+        if val_loss < best_val_loss:
+            best_val_loss  = val_loss
+            patience_count = 0
+            torch.save({"epoch": epoch, "model": model.state_dict()}, best_path)
+            print(f"  ✓ New best val loss: {best_val_loss:.6f}")
+        else:
+            patience_count += 1
+            print(f"  patience {patience_count}/{cfg['training']['patience']}")
+            if patience_count >= cfg["training"]["patience"]:
+                print(f"Early stopping at epoch {epoch}.")
+                early_stop = True
+
+        # ---- Checkpoint (now reflects updated best_val_loss / patience_count) ----
         torch.save(
             {
                 "epoch":         epoch,
@@ -285,18 +299,8 @@ def train(cfg_path: str | Path = ROOT_DIR / "configs" / "default.yaml") -> None:
             ckpt_path,
         )
 
-        # ---- Early stopping ----
-        if val_loss < best_val_loss:
-            best_val_loss  = val_loss
-            patience_count = 0
-            torch.save({"epoch": epoch, "model": model.state_dict()}, best_path)
-            print(f"  ✓ New best val loss: {best_val_loss:.6f}")
-        else:
-            patience_count += 1
-            print(f"  patience {patience_count}/{cfg['training']['patience']}")
-            if patience_count >= cfg["training"]["patience"]:
-                print(f"Early stopping at epoch {epoch}.")
-                break
+        if early_stop:
+            break
 
     thermal.stop()
     print(f"\nTraining complete. Best val loss: {best_val_loss:.6f}")

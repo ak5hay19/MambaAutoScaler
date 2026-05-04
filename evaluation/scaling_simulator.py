@@ -73,6 +73,10 @@ def run_simulation(
     test_ds = ShardedDataset(test_dir)
     loader  = DataLoader(test_ds, batch_size=1, shuffle=False)
 
+    # Shard boundaries — used to reset replica/cooldown state so it does not
+    # leak across windows that come from unrelated machines.
+    shard_boundaries = set(int(c) for c in test_ds.cumulative[:-1])
+
     cpu_mean  = float(scaler.mean_[0])  if scaler else 0.0
     cpu_scale = float(scaler.scale_[0]) if scaler else 1.0
 
@@ -104,7 +108,15 @@ def run_simulation(
     if model is not None:
         model.eval()
 
-    for X_batch, y_batch in loader:
+    for step_idx, (X_batch, y_batch) in enumerate(loader):
+        # Reset state at shard boundaries — windows in different shards come
+        # from different machine batches and should not share cooldown/replicas.
+        if step_idx in shard_boundaries:
+            pred_policy.reset()
+            react_policy.reset()
+            pred_replicas  = 1
+            react_replicas = 1
+
         # X_batch: [1, seq_len, 19],  y_batch: [1, 1, 2]
         X = X_batch[0]   # [seq_len, 19]
         y = y_batch[0]   # [1, 2]

@@ -55,9 +55,9 @@ class ShardedDataset(Dataset):
     def _load_shard(self, shard_idx: int) -> None:
         if shard_idx == self._loaded_shard:
             return
-        data = np.load(self.shard_paths[shard_idx])
-        self._X = torch.from_numpy(data["X"].copy()).float()
-        self._y = torch.from_numpy(data["y"].copy()).float()
+        with np.load(self.shard_paths[shard_idx]) as data:
+            self._X = torch.from_numpy(data["X"].copy()).float()
+            self._y = torch.from_numpy(data["y"].copy()).float()
         self._loaded_shard = shard_idx
 
     def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor]:

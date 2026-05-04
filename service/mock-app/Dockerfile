@@ -5,7 +5,7 @@ WORKDIR /app
 
 RUN pip install --no-cache-dir flask prometheus-client
 
-COPY app.py .
+COPY service/mock-app/app.py .
 
 EXPOSE 5000
 

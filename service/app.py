@@ -193,15 +193,15 @@ def _build_input(
     features[:, DOW_SIN_IDX]  = np.sin(2 * np.pi * (ts_vals % (7 * 86400)) / (7 * 86400)).astype(np.float32)
     features[:, DOW_COS_IDX]  = np.cos(2 * np.pi * (ts_vals % (7 * 86400)) / (7 * 86400)).astype(np.float32)
 
-    # Rolling stats
+    # Rolling stats — ddof=1 to match pandas .rolling().std() used in preprocessing
     for i in range(seq_len):
         s = max(0, i - 11)
         w_cpu = cpu_vals[s : i + 1]
         w_mem = mem_vals[s : i + 1]
         features[i, CPU_ROLL_MEAN_IDX] = float(np.mean(w_cpu))
-        features[i, CPU_ROLL_STD_IDX]  = float(np.std(w_cpu)) if len(w_cpu) > 1 else 0.0
+        features[i, CPU_ROLL_STD_IDX]  = float(np.std(w_cpu, ddof=1)) if len(w_cpu) > 1 else 0.0
         features[i, MEM_ROLL_MEAN_IDX] = float(np.mean(w_mem))
-        features[i, MEM_ROLL_STD_IDX]  = float(np.std(w_mem)) if len(w_mem) > 1 else 0.0
+        features[i, MEM_ROLL_STD_IDX]  = float(np.std(w_mem, ddof=1)) if len(w_mem) > 1 else 0.0
 
     # Rate of change
     features[1:, CPU_DIFF_IDX] = np.diff(cpu_vals)
@@ -243,14 +243,15 @@ async def predict():
         cpu_scale = float(scaler.scale_[0]) if scaler else 100.0
 
         pred_cpu_pct = float(pred_mean[0, 0, 0]) * cpu_scale + cpu_mean
-        pred_cpu_std = float(pred_std[0, 0, 0])   # normalised std
+        # Convert normalised std → CPU fraction so it is comparable to policy.confidence_threshold
+        pred_cpu_std_frac = float(pred_std[0, 0, 0]) * cpu_scale / 100.0
 
         pred_cpu_frac = pred_cpu_pct / 100.0
 
         recommended = policy.decide(
             predicted_cpu=pred_cpu_frac,
             current_replicas=current_replicas,
-            prediction_std=pred_cpu_std,
+            prediction_std=pred_cpu_std_frac,
             current_time=time.time(),
         )
 
@@ -260,7 +261,7 @@ async def predict():
 
         return {
             "predicted_cpu":          round(pred_cpu_pct, 2),
-            "predicted_cpu_std":      round(pred_cpu_std, 4),
+            "predicted_cpu_std":      round(pred_cpu_std_frac, 4),
             "recommended_replicas":   recommended,
             "current_replicas":       current_replicas,
             "horizon_minutes":        5,
