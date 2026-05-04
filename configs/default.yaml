@@ -1,0 +1,41 @@
+data:
+  raw_path: "data/machine_usage.csv"
+  processed_dir: "data/processed"
+  seq_len: 60
+  horizon: 1
+  n_features: 19
+  n_targets: 2
+  chunk_size: 5000000
+  machines_per_shard: 500
+  train_days: [0, 432000]      # days 1-5 in seconds
+  val_days: [432000, 518400]   # day 6
+  test_days: [518400, 691200]  # days 7-8
+
+model:
+  d_model: 64
+  d_state: 16
+  d_conv: 4
+  expand: 2
+  n_layers: 4
+  dropout: 0.1
+
+training:
+  batch_size: 128
+  lr: 0.001
+  weight_decay: 0.0001
+  max_epochs: 50
+  patience: 10
+  num_workers: 2
+
+thermal:
+  warn_temp: 80
+  pause_temp: 85
+  max_epochs_per_session: 25
+
+policy:
+  target_util: 0.70
+  scale_up_threshold: 0.80
+  scale_down_threshold: 0.50
+  cooldown_seconds: 300
+  min_replicas: 1
+  max_replicas: 20
