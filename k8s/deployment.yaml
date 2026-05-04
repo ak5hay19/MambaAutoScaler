@@ -1,0 +1,105 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mamba-autoscaler
+  namespace: default
+  labels:
+    app: mamba-autoscaler
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mamba-autoscaler
+  template:
+    metadata:
+      labels:
+        app: mamba-autoscaler
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: "/metrics"
+    spec:
+      containers:
+        # Main application (replace with your workload image)
+        - name: app
+          image: nginx:alpine
+          ports:
+            - containerPort: 80
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "256Mi"
+
+        # Mamba predictor sidecar
+        - name: predictor
+          image: mamba-predictor:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+              name: predictor
+          env:
+            - name: PROMETHEUS_URL
+              value: "http://prometheus-operated.monitoring.svc.cluster.local:9090"
+            - name: MODEL_PATH
+              value: "/models/model.onnx"
+            - name: SCALER_PATH
+              value: "/data/scaler.pkl"
+            - name: CONFIG_PATH
+              value: "/app/configs/default.yaml"
+          volumeMounts:
+            - name: model-volume
+              mountPath: /models
+              readOnly: true
+            - name: scaler-volume
+              mountPath: /data
+              readOnly: true
+          resources:
+            requests:
+              cpu: "200m"
+              memory: "256Mi"
+            limits:
+              cpu: "1000m"
+              memory: "512Mi"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 10
+
+      volumes:
+        - name: model-volume
+          configMap:
+            name: mamba-model  # replace with PVC or ConfigMap reference
+        - name: scaler-volume
+          configMap:
+            name: mamba-scaler
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mamba-autoscaler
+  namespace: default
+  labels:
+    app: mamba-autoscaler
+spec:
+  selector:
+    app: mamba-autoscaler
+  ports:
+    - name: app
+      port: 80
+      targetPort: 80
+    - name: predictor
+      port: 8080
+      targetPort: 8080
+  type: ClusterIP
