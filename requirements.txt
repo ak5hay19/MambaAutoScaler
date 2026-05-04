@@ -1,0 +1,16 @@
+torch>=2.1.0
+mambapy
+pandas
+numpy
+scikit-learn
+matplotlib
+pyyaml
+fastapi
+uvicorn[standard]
+prometheus-client
+onnxruntime
+onnx
+flask
+requests
+tqdm
+scipy
