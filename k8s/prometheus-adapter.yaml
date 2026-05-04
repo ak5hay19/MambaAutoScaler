@@ -1,0 +1,42 @@
+# Prometheus Adapter configuration to expose `predicted_replica_count`
+# and `predicted_cpu_utilization` as custom metrics in the k8s metrics API.
+#
+# Deploy with:
+#   helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+#   helm upgrade --install prometheus-adapter prometheus-community/prometheus-adapter \
+#     --namespace monitoring -f k8s/prometheus-adapter.yaml
+
+prometheus:
+  url: http://prometheus-operated.monitoring.svc.cluster.local
+  port: 9090
+
+rules:
+  custom:
+    # Expose predicted_replica_count as a per-pod custom metric
+    - seriesQuery: 'predicted_replica_count{namespace!="",pod!=""}'
+      resources:
+        overrides:
+          namespace: {resource: "namespace"}
+          pod:       {resource: "pod"}
+      name:
+        matches: "predicted_replica_count"
+        as:      "predicted_replica_count"
+      metricsQuery: 'avg(<<.Series>>{<<.LabelMatchers>>}) by (<<.GroupBy>>)'
+
+    # Expose predicted_cpu_utilization
+    - seriesQuery: 'predicted_cpu_utilization{namespace!="",pod!=""}'
+      resources:
+        overrides:
+          namespace: {resource: "namespace"}
+          pod:       {resource: "pod"}
+      name:
+        matches: "predicted_cpu_utilization"
+        as:      "predicted_cpu_utilization"
+      metricsQuery: 'avg(<<.Series>>{<<.LabelMatchers>>}) by (<<.GroupBy>>)'
+
+  # Also expose as external metric (useful for KEDA or HPA v2 external metrics)
+  external:
+    - seriesQuery: 'predicted_replica_count'
+      name:
+        as: "predicted_replica_count"
+      metricsQuery: 'avg(predicted_replica_count)'
