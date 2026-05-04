@@ -3,3 +3,6 @@ hardware_constraints.md
 windows_and_deployment.md
 PROMPT.md
 data/machine_usage.csv
+/.claude
+context.md
+*.pyc
