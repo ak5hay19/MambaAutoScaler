@@ -1,0 +1,85 @@
+version: "3.8"
+
+services:
+
+  # ----------------------------------------------------------------
+  # mock-app: generates realistic CPU / memory Prometheus metrics
+  # ----------------------------------------------------------------
+  mock-app:
+    build:
+      context: ..
+      dockerfile: service/mock-app/Dockerfile
+    container_name: mock-app
+    ports:
+      - "5000:5000"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  # ----------------------------------------------------------------
+  # predictor: FastAPI + ONNX inference + scaling recommendations
+  # ----------------------------------------------------------------
+  predictor:
+    build:
+      context: ..
+      dockerfile: service/Dockerfile
+    container_name: predictor
+    ports:
+      - "8080:8080"
+    environment:
+      - PROMETHEUS_URL=http://prometheus:9090
+      - MODEL_PATH=/app/models/model.onnx
+      - SCALER_PATH=/app/data/scaler.pkl
+      - CONFIG_PATH=/app/configs/default.yaml
+      - CURRENT_REPLICAS=1
+    volumes:
+      - ../models:/app/models:ro
+      - ../data/scaler.pkl:/app/data/scaler.pkl:ro
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ----------------------------------------------------------------
+  # prometheus: scrapes mock-app and predictor every 15 s
+  # ----------------------------------------------------------------
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9090:9090"
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.retention.time=7d"
+    restart: unless-stopped
+
+  # ----------------------------------------------------------------
+  # grafana: dashboards with auto-provisioned Prometheus datasource
+  # ----------------------------------------------------------------
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - ./grafana-datasources.yml:/etc/grafana/provisioning/datasources/datasources.yml:ro
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
+volumes:
+  grafana_data:
