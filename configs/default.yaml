@@ -6,7 +6,7 @@ data:
   n_features: 19
   n_targets: 2
   chunk_size: 5000000
-  machines_per_shard: 500
+  machines_per_shard: 100      # og was 500
   train_days: [0, 432000]      # days 1-5 in seconds
   val_days: [432000, 518400]   # day 6
   test_days: [518400, 691200]  # days 7-8
@@ -20,12 +20,12 @@ model:
   dropout: 0.1
 
 training:
-  batch_size: 128
+  batch_size: 64
   lr: 0.001
   weight_decay: 0.0001
   max_epochs: 50
   patience: 10
-  num_workers: 2
+  num_workers: 0
 
 thermal:
   warn_temp: 80
