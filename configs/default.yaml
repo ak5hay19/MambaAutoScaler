@@ -20,7 +20,7 @@ model:
   dropout: 0.1
 
 training:
-  batch_size: 64  # og 128
+  batch_size: 512  # bumped from 64; model uses <20MB VRAM at B=64, plenty of headroom
   lr: 0.001
   weight_decay: 0.0001
   max_epochs: 50

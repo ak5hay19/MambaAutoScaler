@@ -76,6 +76,21 @@ class ShardedDataset(Dataset):
         self._load_shard(0)
         return self._X.shape[1]
 
+    @property
+    def num_shards(self) -> int:
+        return len(self.shard_paths)
+
+    def load_shard_tensors(self, shard_idx: int) -> tuple[torch.Tensor, torch.Tensor]:
+        """Load a full shard as (X, y) tensors. For shard-aware training.
+
+        Returns fresh tensors each call (not cached), so the caller
+        controls the lifetime and the internal cache is not polluted.
+        """
+        with np.load(self.shard_paths[shard_idx]) as data:
+            X = torch.from_numpy(data["X"].copy()).float()
+            y = torch.from_numpy(data["y"].copy()).float()
+        return X, y
+
 
 if __name__ == "__main__":
     import sys

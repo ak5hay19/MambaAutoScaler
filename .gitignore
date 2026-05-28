@@ -8,3 +8,5 @@ context.md
 *.pyc
 *.npz
 *.pkl
+gameplanV2.md
+task.md

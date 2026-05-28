@@ -83,11 +83,11 @@ class ThermalMonitor:
 
             if temp >= self.pause_temp:
                 if not self._pause_event.is_set():
-                    print(f"\n[Thermal] {temp}°C ≥ {self.pause_temp}°C — pausing training...")
+                    print(f"\n[Thermal] {temp}C >= {self.pause_temp}C -- pausing training...")
                 self._pause_event.set()
             elif temp < self.warn_temp:
                 if self._pause_event.is_set():
-                    print(f"\n[Thermal] {temp}°C — resuming training.")
+                    print(f"\n[Thermal] {temp}C -- resuming training.")
                     self._pause_event.clear()
             else:
                 # warn zone: between warn_temp and pause_temp
@@ -116,6 +116,7 @@ class ThermalMonitor:
 # ---------------------------------------------------------------------------
 
 def train(cfg_path: str | Path = ROOT_DIR / "configs" / "default.yaml") -> None:
+    import random
     import yaml
 
     with open(cfg_path) as fh:
@@ -125,7 +126,7 @@ def train(cfg_path: str | Path = ROOT_DIR / "configs" / "default.yaml") -> None:
     print(f"Device: {device}")
 
     # ------------------------------------------------------------------
-    # Data
+    # Data — shard-aware: we iterate shard-by-shard to avoid thrashing
     # ------------------------------------------------------------------
     train_dir = ROOT_DIR / cfg["data"]["processed_dir"] / "train"
     val_dir   = ROOT_DIR / cfg["data"]["processed_dir"] / "val"
@@ -133,26 +134,9 @@ def train(cfg_path: str | Path = ROOT_DIR / "configs" / "default.yaml") -> None:
     train_ds = ShardedDataset(train_dir)
     val_ds   = ShardedDataset(val_dir)
     print(f"Train windows: {len(train_ds):,}   Val windows: {len(val_ds):,}")
+    print(f"Train shards: {train_ds.num_shards}   Val shards: {val_ds.num_shards}")
 
-    # On Windows, num_workers > 0 requires __main__ guard (handled below)
-    num_workers = cfg["training"]["num_workers"]
-
-    train_loader = DataLoader(
-        train_ds,
-        batch_size=cfg["training"]["batch_size"],
-        shuffle=True,
-        num_workers=num_workers,
-        pin_memory=device.type == "cuda",
-        persistent_workers=num_workers > 0,
-    )
-    val_loader = DataLoader(
-        val_ds,
-        batch_size=cfg["training"]["batch_size"],
-        shuffle=False,
-        num_workers=num_workers,
-        pin_memory=device.type == "cuda",
-        persistent_workers=num_workers > 0,
-    )
+    batch_size = cfg["training"]["batch_size"]
 
     # ------------------------------------------------------------------
     # Model
@@ -220,7 +204,7 @@ def train(cfg_path: str | Path = ROOT_DIR / "configs" / "default.yaml") -> None:
     )
 
     # ------------------------------------------------------------------
-    # Training loop
+    # Training loop — shard-aware
     # ------------------------------------------------------------------
     for epoch in range(start_epoch, max_epochs):
 
@@ -229,40 +213,84 @@ def train(cfg_path: str | Path = ROOT_DIR / "configs" / "default.yaml") -> None:
             print(f"[Epoch {epoch}] Scheduled 30 s cooldown...")
             time.sleep(30)
 
-        # ---- Train ----
+        # ---- Train (shard-by-shard, shuffled order) ----
         model.train()
-        train_loss = 0.0
+        epoch_loss_sum   = 0.0
+        epoch_batch_count = 0
 
-        for batch_X, batch_y in tqdm(train_loader, desc=f"Ep {epoch:03d} train", leave=False):
-            thermal.wait_if_hot()
+        shard_order = list(range(train_ds.num_shards))
+        random.shuffle(shard_order)
 
-            batch_X = batch_X.to(device, non_blocking=True)
-            batch_y = batch_y.to(device, non_blocking=True)
+        epoch_pbar = tqdm(shard_order, desc=f"Ep {epoch:03d} train", leave=False)
+        for shard_idx in epoch_pbar:
+            # Load one shard into RAM (~50 MB), create in-memory DataLoader
+            shard_X, shard_y = train_ds.load_shard_tensors(shard_idx)
+            shard_dataset = torch.utils.data.TensorDataset(shard_X, shard_y)
+            shard_loader  = DataLoader(
+                shard_dataset,
+                batch_size=batch_size,
+                shuffle=True,
+                pin_memory=device.type == "cuda",
+                num_workers=0,
+            )
 
-            optimizer.zero_grad(set_to_none=True)
-            pred = model(batch_X)
-            loss = criterion(pred, batch_y)
-            loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-            optimizer.step()
+            shard_loss = 0.0
+            shard_batches = 0
 
-            train_loss += loss.item()
+            for batch_X, batch_y in shard_loader:
+                thermal.wait_if_hot()
 
-        train_loss /= len(train_loader)
-        scheduler.step()
-
-        # ---- Validate ----
-        model.eval()
-        val_loss = 0.0
-
-        with torch.no_grad():
-            for batch_X, batch_y in tqdm(val_loader, desc=f"Ep {epoch:03d} val  ", leave=False):
                 batch_X = batch_X.to(device, non_blocking=True)
                 batch_y = batch_y.to(device, non_blocking=True)
-                pred = model(batch_X)
-                val_loss += criterion(pred, batch_y).item()
 
-        val_loss /= len(val_loader)
+                optimizer.zero_grad(set_to_none=True)
+                pred = model(batch_X)
+                loss = criterion(pred, batch_y)
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+                optimizer.step()
+
+                shard_loss += loss.item()
+                shard_batches += 1
+
+            # Free shard memory
+            del shard_X, shard_y, shard_dataset, shard_loader
+
+            avg_shard_loss = shard_loss / shard_batches if shard_batches else 0.0
+            epoch_loss_sum += shard_loss
+            epoch_batch_count += shard_batches
+            epoch_pbar.set_postfix(shard_loss=f"{avg_shard_loss:.4f}")
+
+        train_loss = epoch_loss_sum / epoch_batch_count if epoch_batch_count else 0.0
+        scheduler.step()
+
+        # ---- Validate (shard-by-shard, sequential) ----
+        model.eval()
+        val_loss_sum    = 0.0
+        val_batch_count = 0
+
+        with torch.no_grad():
+            for shard_idx in tqdm(range(val_ds.num_shards), desc=f"Ep {epoch:03d} val  ", leave=False):
+                shard_X, shard_y = val_ds.load_shard_tensors(shard_idx)
+                shard_dataset = torch.utils.data.TensorDataset(shard_X, shard_y)
+                shard_loader  = DataLoader(
+                    shard_dataset,
+                    batch_size=batch_size,
+                    shuffle=False,
+                    pin_memory=device.type == "cuda",
+                    num_workers=0,
+                )
+
+                for batch_X, batch_y in shard_loader:
+                    batch_X = batch_X.to(device, non_blocking=True)
+                    batch_y = batch_y.to(device, non_blocking=True)
+                    pred = model(batch_X)
+                    val_loss_sum += criterion(pred, batch_y).item()
+                    val_batch_count += 1
+
+                del shard_X, shard_y, shard_dataset, shard_loader
+
+        val_loss = val_loss_sum / val_batch_count if val_batch_count else 0.0
         lr_now = scheduler.get_last_lr()[0]
 
         print(
