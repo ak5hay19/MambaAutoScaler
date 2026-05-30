@@ -23,14 +23,17 @@ training:
   batch_size: 512  # bumped from 64; model uses <20MB VRAM at B=64, plenty of headroom
   lr: 0.001
   weight_decay: 0.0001
-  max_epochs: 50
-  patience: 10
+  max_epochs: 8
+  patience: 3
   num_workers: 0  # og 2
+  train_shards_per_epoch: 8   # fast laptop-friendly pass; set null for all 41 shards
+  val_shards_per_epoch: 4     # fast validation subset; set null for all 41 shards
+  shard_subset_seed: 42
 
 thermal:
   warn_temp: 80
   pause_temp: 85
-  max_epochs_per_session: 25
+  max_epochs_per_session: 8
 
 policy:
   target_util: 0.70

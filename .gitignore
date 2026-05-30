@@ -12,3 +12,7 @@ gameplanV2.md
 task.md
 *.2067038952048
 gameplanV3.md
+checkpoints/in_progress.pt
+*.1367578096032
+*.1529050535888
+/data/__pycache__
